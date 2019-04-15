@@ -59,6 +59,7 @@ func (c *Controller) syncToStdout(key string) error {
 	replicas := obj.(*appsv1.Deployment).Status.Replicas
 	readyReplicas := obj.(*appsv1.Deployment).Status.ReadyReplicas
 	conditions := obj.(*appsv1.Deployment).Status.Conditions
+	firstTransitionTime := conditions[0].LastTransitionTime
 	lastTransitionTime := conditions[len(conditions)-1].LastTransitionTime
 	typeValue := conditions[len(conditions)-1].Type
 
@@ -69,6 +70,7 @@ func (c *Controller) syncToStdout(key string) error {
 		// TODO
 		c.mutex.Unlock()
 	} else {
+		// `Type=Available` with `Status=True` signals successful deployment
 		fmt.Printf("%s: scanning deployment %s\n", au.Bold(au.Cyan("Info")), name)
 
 		if len(team) > 0 {
@@ -77,8 +79,10 @@ func (c *Controller) syncToStdout(key string) error {
 			fmt.Printf("=> Image %s\n", au.Bold(image))
 			fmt.Printf("=> Replicas %d\n", au.Bold(replicas))
 			fmt.Printf("=> ReadyReplicas %d\n", au.Bold(readyReplicas))
+			fmt.Printf("=> FirstTransitionTime %s\n", au.Bold(firstTransitionTime))
 			fmt.Printf("=> LastTransitionTime %s\n", au.Bold(lastTransitionTime))
 			fmt.Printf("=> Type %s\n", au.Bold(typeValue))
+			fmt.Printf("=> Status %v\n", au.Bold(obj.(*appsv1.Deployment).Status))
 			c.mutex.Unlock()
 		}
 	}
