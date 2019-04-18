@@ -55,9 +55,14 @@ func (c *Controller) syncToStdout(key string) error {
                 return err
         }
 
+	// exit condition: ignore deployments without annotation
+        team := obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationName)]
+	if len(team) == 0 {
+		return nil
+	}
+
         name := obj.(*appsv1.Deployment).GetName()
         namespace := obj.(*appsv1.Deployment).ObjectMeta.Namespace
-        team := obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationName)]
         image := obj.(*appsv1.Deployment).Spec.Template.Spec.Containers[0].Image
         replicas := obj.(*appsv1.Deployment).Status.Replicas
         readyReplicas := obj.(*appsv1.Deployment).Status.ReadyReplicas
@@ -80,101 +85,92 @@ func (c *Controller) syncToStdout(key string) error {
 		if teamExists {
 			c.state[team][name] = Deployment{}
 		}
-                // TODO
                 c.mutex.Unlock()
-        } else {
-                fmt.Fprintf(os.Stderr, "%s: scanning deployment %s\n", au.Bold(au.Cyan("Info")), name)
-                success := false
-                _, teamExists := c.state[team]
+		return nil
+        }
+        fmt.Fprintf(os.Stderr, "%s: scanning deployment %s\n", au.Bold(au.Cyan("Info")), name)
+        success := false
+	c.mutex.Lock()
+        if !teamExists {
+                c.state[team] = map[string]Deployment{}
+        }
+        c.mutex.Unlock()
 
-                c.mutex.Lock()
-                if !teamExists {
-                        c.state[team] = map[string]Deployment{}
+        // NB: a NEW image does not qualify as an UPDATED image
+        // don't process all available deployments right away
+        imageChanged := false
+        var recoverySeconds int64
+        recoverySeconds = 0
+        _, nameExists := c.state[team][name]
+	previousSuccess := true // we only use the negative for tests later
+        if nameExists {
+                previous := c.state[team][name]
+                imageChanged = image != previous.Image
+                previousSuccess = previous.Success
+                if !previousSuccess {
+                        recoverySeconds = lastTimestamp.Unix() - previous.LastTimestamp
+                }
+        }
+
+        if lastType == "Available" && lastStatus == "True" {
+                // Successful deployment
+                success = true
+        } else if lastType == "Progressing" && lastStatus == "True" {
+		// sometimes successful deployments get stuck in this state
+		// skip only if replicas and readyReplicas don't match
+		if replicas != readyReplicas {
+			fmt.Fprintf(os.Stderr, "%s: skipping - rollout in progress\n", au.Bold(au.Cyan("Info")))
+			return nil
+		}
+		success = true
+        } else if lastType == "Progressing" && lastStatus == "False" {
+		if !previousSuccess {
+			return nil
+		}
+                success = false
+        } else if lastType == "ReplicaFailure" {
+		if !previousSuccess {
+			return nil
+		}
+                // now record failed deployment and set previous deployment
+                success = false
+        }
+
+        deployment := Deployment{
+                name,
+                namespace,
+                image,
+                lastTimestamp.Unix(),
+                success,
+                imageChanged,
+                recoverySeconds,
+        }
+
+        c.mutex.Lock()
+        c.state[team][name] = deployment
+        debug := c.debug
+        c.mutex.Unlock()
+
+        if len(team) > 0 {
+                if (debug) {
+                        fmt.Fprintf(os.Stderr, "=> Team: %s\n", au.Bold(team))
+                        fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
+                        fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
+                        fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
+                        fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
+                        fmt.Fprintf(os.Stderr ,"=> Type %s\n", au.Bold(lastType))
+                        fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
+                        fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
+                        fmt.Fprintf(os.Stderr, "=> Deployment:\n")
                 }
 
-		// NB: a NEW image does not qualify as an UPDATED image
-		// don't process all available deployments right away
-		imageChanged := false
-		var recoverySeconds int64
-		recoverySeconds = 0
-		_, nameExists := c.state[team][name]
-		if nameExists {
-			previous := c.state[team][name]
-			imageChanged = image != previous.Image
-			previousSuccess := previous.Success
-			if !previousSuccess {
-				recoverySeconds = lastTimestamp.Unix() - previous.LastTimestamp
-			}
-		}
-
-                c.mutex.Unlock()
-
-                if lastType == "Available" && lastStatus == "True" {
-                        // Successful deployment
-                        success = true
-
-                        // new deployment?
-
-                        // no state entry
-                        c.mutex.Lock()
-                        c.state[team][name] = Deployment{
-                                name,
-                                namespace,
-                                image,
-                                lastTimestamp.Unix(),
-                                success,
-				imageChanged,
-				recoverySeconds,
-                        }
-                        c.mutex.Unlock()
-                } else if lastType == "Progressing" && lastStatus == "True" {
-                        // Transitional state - don't engage for now
+                bytes, err := json.Marshal(deployment)
+                if err != nil {
+                        fmt.Fprintf(os.Stderr, "%s: %s", au.Bold(au.Red("Error")), au.Bold(err))
                         return nil
-                } else if lastType == "Progressing" && lastStatus == "False" {
-                        // error
-                        success = false
-                } else  if lastType == "ReplicaFailure" {
-                        // now record failed deployment and set previous deployment
-                        success = false
-                        // TODO: if previous already false, skip
                 }
-
-		deployment := Deployment{
-			name,
-                        namespace,
-                        image,
-                        lastTimestamp.Unix(),
-                        success,
-                        imageChanged,
-                        recoverySeconds,
-		}
-
-                c.mutex.Lock()
-                c.state[team][name] = deployment
-		debug := c.debug
-		c.mutex.Unlock()
-
-                if len(team) > 0 {
-			if (debug) {
-				fmt.Fprintf(os.Stderr, "=> Team: %s\n", au.Bold(team))
-				fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
-				fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
-				fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
-				fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
-				fmt.Fprintf(os.Stderr ,"=> Type %s\n", au.Bold(lastType))
-				fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
-				fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
-				fmt.Fprintf(os.Stderr, "=> Deployment:\n")
-			}
-
-			bytes, err := json.Marshal(deployment)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %s", au.Bold(au.Red("Error")), au.Bold(err))
-				return nil
-			}
-			// main JSON output goes to stdout
-			fmt.Printf("%s\n", bytes)
-                }
+                // main JSON output goes to stdout
+                fmt.Printf("%s\n", bytes)
         }
         if c.queue.Len() == 0 {
 		// TODO: is this significant here?
