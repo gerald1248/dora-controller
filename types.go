@@ -13,13 +13,16 @@ type Controller struct {
         informer  cache.Controller
         clientset kubernetes.Interface
         mutex     *sync.Mutex
-        state     map[string][]Deployment // map[TEAM][]Deployment
+        state     map[string]map[string]Deployment // map[TEAM]map[NAME]Deployment
+	debug     bool
 }
 
 type Deployment struct {
-	Name          string `json:"name"`
-	Namespace     string `json:"namespace"`
-	TimeScheduled int64  `json:"timeScheduled"`
-	TimeCompleted int64  `json:"timeCompleted"`
-	Success       bool   `json:"success"`
+	Name            string `json:"name"`
+	Namespace       string `json:"namespace"`
+	Image           string `json:"image"`
+	LastTimestamp   int64  `json:"lastTimestamp"`
+	Success         bool   `json:"success"`
+	ImageChanged    bool   `json:"imageChanged"`
+	RecoverySeconds int64  `json:"recoverySeconds,omitempty"`
 }
