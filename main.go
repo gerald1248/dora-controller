@@ -136,10 +136,13 @@ func (c *Controller) syncToStdout(key string) error {
                 success = false
         }
 
+	flags := getDeploymentFlags(success, previousSuccess, imageChanged)
+
         deployment := Deployment{
                 name,
                 namespace,
                 image,
+		flags,
                 lastTimestamp.Unix(),
                 success,
                 imageChanged,

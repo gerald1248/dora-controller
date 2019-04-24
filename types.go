@@ -21,6 +21,7 @@ type Deployment struct {
 	Name            string `json:"name"`
 	Namespace       string `json:"namespace"`
 	Image           string `json:"image"`
+	Flags           string `json:"flags"`
 	LastTimestamp   int64  `json:"lastTimestamp"`
 	Success         bool   `json:"success"`
 	ImageChanged    bool   `json:"imageChanged"`
