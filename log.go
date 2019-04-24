@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
+	au "github.com/logrusorgru/aurora"
 	"os"
 	"time"
-        au "github.com/logrusorgru/aurora"
 )
 
 func log(s string) {
