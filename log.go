@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	au "github.com/logrusorgru/aurora"
 	"os"
 	"time"
 )
@@ -10,5 +9,5 @@ import (
 func log(s string) {
 	time := time.Now()
 	timestamp := fmt.Sprintf("%s", time.Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(os.Stderr, "[%s] %s\n", timestamp, au.Bold(s))
+	fmt.Fprintf(os.Stderr, "[%s] %s\n", timestamp, s)
 }

@@ -1,28 +1,40 @@
 package main
 
+import "strings"
+
 func getDeploymentFlags(success bool, previousSuccess bool, imageChanged bool) string {
-	var s string
-	if success && imageChanged {
-		s += "DORA_SUCCESS"
-	} else if success && !previousSuccess {
-		s += "DORA_RECOVERY"
-	} else if success {
-		s += "DORA_REDEPLOY"
+	var flags []string
+
+	// overall outcome
+	if success {
+		flags = append(flags, "DORA_SUCCESS")
 	} else {
-		s += "DORA_FAILURE"
+		flags = append(flags, "DORA_FAILURE")
 	}
 
+	// deployment outcome
 	if imageChanged {
-		s += "|DORA_NEW_IMAGE"
+		flags = append(flags, "DORA_NEW_IMAGE")
+		if success {
+			flags = append(flags, "DORA_SUCCESSFUL_DEPLOYMENT")
+		} else {
+			flags = append(flags, "DORA_FAILED_DEPLOYMENT")
+		}
 	} else {
-		s += "|DORA_SAME_IMAGE"
+		flags = append(flags, "DORA_SAME_IMAGE")
 	}
 
+	// after success/failure
 	if previousSuccess {
-		s += "|DORA_PREVIOUS_SUCCESS"
+		flags = append(flags, "DORA_PREVIOUS_SUCCESS")
 	} else {
-		s += "|DORA_PREVIOUS_FAILURE"
+		flags = append(flags, "DORA_PREVIOUS_FAILURE")
+		if success {
+			flags = append(flags, "DORA_RECOVERY")
+		} else {
+			flags = append(flags, "DORA_REPEAT_FAILURE")
+		}
 	}
 
-	return s
+	return strings.Join(flags, "|")
 }

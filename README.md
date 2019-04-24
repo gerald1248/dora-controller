@@ -1,10 +1,21 @@
 # DORA controller
-This controller collects DORA metrics.
+This controller collects DORA metrics:
 
-Add annotation `dora/team` with an appropriate value (e.g. `frontend`, `ops`) to your deployment to monitor deployment success or otherwise.
+* lead time (commit to deployment)
 
-## Run out of cluster
+* deploy frequency
+
+* mean time to recovery
+
+* change fail percentage
+
+To gather metrics for your deployment, add the following annotation(s):
+
+* `dora/team` (e.g. `frontend`, `ops`) - required
+* `dora/commitTimestamp` (Unix time, e.g. 1555126199)
+
+Use the Helm chart for in-cluster deployment. For out-of cluster use, specify the path to your Kubernetes config file or export KUBECONFIG:
+
 ```
-$ go build
 $ ./dora-controller --kubeconfig=${HOME}/.kube/config
 ```

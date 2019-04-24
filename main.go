@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,7 +24,8 @@ import (
 )
 
 const annotationPrefix = "dora"
-const annotationName = "team"
+const annotationNameTeam = "team"
+const annotationNameCommitTimestamp = "commitTimestamp"
 
 // NewController constructs the central controller state
 func NewController(queue workqueue.RateLimitingInterface, indexer cache.Indexer, informer cache.Controller, clientset kubernetes.Interface, mutex *sync.Mutex, state map[string]map[string]Deployment, debug bool) *Controller {
@@ -59,9 +61,20 @@ func (c *Controller) syncToStdout(key string) error {
 	}
 
 	// exit condition: ignore deployments without annotation
-	team := obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationName)]
+	team := obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationNameTeam)]
 	if len(team) == 0 {
 		return nil
+	}
+	
+	var commitTimestampString string // string representation of int64
+	var commitTimestamp int64 // we store this form
+	commitTimestampString = obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationNameCommitTimestamp)]
+	
+	intVar, err := strconv.Atoi(commitTimestampString)
+	if err != nil {
+		commitTimestamp = 0
+	} else {
+		commitTimestamp = int64(intVar)
 	}
 
 	name := obj.(*appsv1.Deployment).GetName()
@@ -105,7 +118,7 @@ func (c *Controller) syncToStdout(key string) error {
 	var recoverySeconds int64
 	recoverySeconds = 0
 	_, nameExists := c.state[team][name]
-	previousSuccess := true // we only use the negative for tests later
+	previousSuccess := true
 	if nameExists {
 		previous := c.state[team][name]
 		imageChanged = image != previous.Image
@@ -139,17 +152,28 @@ func (c *Controller) syncToStdout(key string) error {
 		success = false
 	}
 
+	// ignore successful redeployments - only code changes count
+	if success && !imageChanged {
+		return nil
+	}
+
 	flags := getDeploymentFlags(success, previousSuccess, imageChanged)
 
+	var leadTimeSeconds int64
+	if commitTimestamp > 0 {
+		leadTimeSeconds = lastTimestamp.Unix() - commitTimestamp
+	}
 	deployment := Deployment{
 		name,
 		namespace,
 		image,
 		flags,
-		lastTimestamp.Unix(),
+		lastTimestamp.Unix(), //int64
+		commitTimestamp, //int64
 		success,
 		imageChanged,
 		recoverySeconds,
+		leadTimeSeconds,
 	}
 
 	c.mutex.Lock()
@@ -164,6 +188,9 @@ func (c *Controller) syncToStdout(key string) error {
 			fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
 			fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
 			fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
+			if (commitTimestamp > 0) {
+				fmt.Fprintf(os.Stderr, "=> CommitTimestamp %s\n", au.Bold(commitTimestampString))
+			}
 			fmt.Fprintf(os.Stderr, "=> Type %s\n", au.Bold(lastType))
 			fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
 			fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
