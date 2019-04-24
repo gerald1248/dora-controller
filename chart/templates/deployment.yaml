@@ -1,0 +1,48 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: {{ .Values.name | quote }}
+  namespace: {{ .Values.namespace | quote }}
+  labels:
+    app: {{ .Values.name | quote }}
+spec:
+  triggers:
+  - type: ConfigChange
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.name | quote }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.name | quote }}
+    spec:
+      serviceAccountname: {{ .Values.name | quote }}
+      serviceAccount: {{ .Values.name | quote }}
+      containers:
+      - name: {{ .Values.name | quote }}
+        image: gerald1248/dora-controller:latest
+        command: [ "dora-controller" ]
+        args: [ "--debug=true" ]
+        resources:
+          limits:
+            cpu: 200m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 512Mi
+        livenessProbe:
+          exec:
+            command:
+            - date
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - date
+          initialDelaySeconds: 20
+          periodSeconds: 20
+        env:
+        - name: KUBE_CONFIG
+          value: "~/.kube/config"

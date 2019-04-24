@@ -1,5 +1,11 @@
 # Main binary
 dora-controller
+linux
+darwin
+windows
+
+# Checksum file
+go.sum
 
 # Binaries for programs and plugins
 *.exe

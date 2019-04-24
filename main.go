@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -51,7 +52,7 @@ func (c *Controller) processNextItem() bool {
 func (c *Controller) syncToStdout(key string) error {
         obj, keyExists, err := c.indexer.GetByKey(key)
         if err != nil {
-                fmt.Fprintf(os.Stderr, "%s: fetching object with key %s from store failed with %v", au.Bold(au.Red("Error")), key, err)
+                log(fmt.Sprintf("%s: fetching object with key %s from store failed with %v", au.Bold(au.Red("Error")), key, err))
                 return err
         }
 
@@ -80,7 +81,7 @@ func (c *Controller) syncToStdout(key string) error {
         c.mutex.Unlock()
 
         if !keyExists {
-                fmt.Fprintf(os.Stderr, "%s: deployment %s deleted\n", au.Bold(au.Cyan("Info")), key)
+		log(fmt.Sprintf("%s: deployment %s deleted", au.Bold(au.Cyan("INFO")), key))
                 c.mutex.Lock()
 		if teamExists {
 			c.state[team][name] = Deployment{}
@@ -88,7 +89,7 @@ func (c *Controller) syncToStdout(key string) error {
                 c.mutex.Unlock()
 		return nil
         }
-        fmt.Fprintf(os.Stderr, "%s: scanning deployment %s\n", au.Bold(au.Cyan("Info")), name)
+	log(fmt.Sprintf("%s: scanning deployment %s", au.Bold(au.Cyan("INFO")), name))
         success := false
 	c.mutex.Lock()
         if !teamExists {
@@ -119,7 +120,7 @@ func (c *Controller) syncToStdout(key string) error {
 		// sometimes successful deployments get stuck in this state
 		// skip only if replicas and readyReplicas don't match
 		if replicas != readyReplicas {
-			fmt.Fprintf(os.Stderr, "%s: skipping - rollout in progress\n", au.Bold(au.Cyan("Info")))
+			log(fmt.Sprintf("%s: skipping - rollout in progress", au.Bold(au.Cyan("INFO"))))
 			return nil
 		}
 		success = true
@@ -169,7 +170,7 @@ func (c *Controller) syncToStdout(key string) error {
 
                 bytes, err := json.Marshal(deployment)
                 if err != nil {
-                        fmt.Fprintf(os.Stderr, "%s: %s", au.Bold(au.Red("Error")), au.Bold(err))
+                        log(fmt.Sprintf("%s: %s", au.Bold(au.Red("Error")), au.Bold(err)))
                         return nil
                 }
                 // main JSON output goes to stdout
@@ -189,21 +190,21 @@ func (c *Controller) handleErr(err error, key interface{}) {
         }
 
         if c.queue.NumRequeues(key) < 5 {
-                fmt.Fprintf(os.Stderr, "%s: can't sync deployment %v: %v", au.Bold(au.Red("Error")), key, err)
+                log(fmt.Sprintf("%s: can't sync deployment %v: %v", au.Bold(au.Red("Error")), key, err))
                 c.queue.AddRateLimited(key)
                 return
         }
 
         c.queue.Forget(key)
         runtime.HandleError(err)
-        fmt.Fprintf(os.Stderr, "%s: dropping deployment %q from the queue: %v", au.Bold(au.Cyan("Info")), key, err)
+        log(fmt.Sprintf("%s: dropping deployment %q from the queue: %v", au.Bold(au.Cyan("INFO")), key, err))
 }
 
 func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
         defer runtime.HandleCrash()
 
         defer c.queue.ShutDown()
-        fmt.Fprintf(os.Stderr, "%s: starting DORA controller\n", au.Bold(au.Cyan("Info")))
+        log(fmt.Sprintf("%s: starting DORA controller", au.Bold(au.Cyan("INFO"))))
 
         go c.informer.Run(stopCh)
 
@@ -217,7 +218,7 @@ func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
         }
 
         <-stopCh
-        fmt.Fprintf(os.Stderr, "%s: stopping DORA controller\n", au.Bold(au.Cyan("Info")))
+        log(fmt.Sprintf("%s: stopping DORA controller", au.Bold(au.Cyan("INFO"))))
 }
 
 func (c *Controller) runWorker() {
@@ -235,11 +236,19 @@ func main() {
 	flag.BoolVar(&debug, "debug", false, "Debug mode")
         flag.Parse()
 
+	if len(kubeconfig) == 0 {
+		kubeconfig = os.Getenv("KUBECONFIG")
+	}
+
+	if len(kubeconfig) == 0 {
+		kubeconfig = filepath.Join(homeDir(), ".kube", "config")
+	}
+
         // creates the connection
         config, err := clientcmd.BuildConfigFromFlags(master, kubeconfig)
         if err != nil {
-                fmt.Fprintf(os.Stderr, "%s: %s", au.Bold(au.Red("Error")), err)
-                return
+		fmt.Fprintf(os.Stderr, "%s: %s", au.Bold(au.Red("Error")), err)
+		return
         }
 
         // creates the clientset
@@ -284,4 +293,11 @@ func main() {
         go controller.Run(1, stop)
 
         select {}
+}
+
+func homeDir() string {
+        if h := os.Getenv("HOME"); h != "" {
+                return h
+        }
+        return os.Getenv("USERPROFILE") // windows
 }

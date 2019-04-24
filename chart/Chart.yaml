@@ -1,0 +1,14 @@
+apiVersion: v1
+name: dora-controller
+version: 0.1.0
+description: "dora-controller"
+icon: "https://docs.helm.sh/src/img/helm-logo.svg"
+keywords:
+  - kubernetes
+  - dora
+home: https://github.com/gerald1248/dora-controller
+sources:
+  - https://github.com/gerald1248/dora-controller
+maintainers:
+  - name: gerald1248
+    email: gerald1248@gmail.com

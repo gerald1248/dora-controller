@@ -1,0 +1,6 @@
+FROM ubuntu:18.10
+WORKDIR /app/
+RUN groupadd app && useradd -g app app
+COPY linux/dora-controller /usr/local/bin/dora-controller
+USER app
+CMD ["dora-controller"]
