@@ -65,11 +65,11 @@ func (c *Controller) syncToStdout(key string) error {
 	if len(team) == 0 {
 		return nil
 	}
-	
+
 	var commitTimestampString string // string representation of int64
 	var commitTimestamp int64 // we store this form
 	commitTimestampString = obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationNameCommitTimestamp)]
-	
+
 	intVar, err := strconv.Atoi(commitTimestampString)
 	if err != nil {
 		commitTimestamp = 0
@@ -82,10 +82,13 @@ func (c *Controller) syncToStdout(key string) error {
 	image := obj.(*appsv1.Deployment).Spec.Template.Spec.Containers[0].Image
 	replicas := obj.(*appsv1.Deployment).Status.Replicas
 	readyReplicas := obj.(*appsv1.Deployment).Status.ReadyReplicas
+	unavailableReplicas := obj.(*appsv1.Deployment).Status.UnavailableReplicas
+	updatedReplicas := obj.(*appsv1.Deployment).Status.UpdatedReplicas
 	conditions := obj.(*appsv1.Deployment).Status.Conditions
 	lastTimestamp := conditions[len(conditions)-1].LastTransitionTime
 	lastType := conditions[len(conditions)-1].Type
 	lastStatus := conditions[len(conditions)-1].Status
+	lastReason := conditions[len(conditions)-1].Reason
 
 	_, teamExists := c.state[team]
 
@@ -132,13 +135,14 @@ func (c *Controller) syncToStdout(key string) error {
 		// Successful deployment
 		success = true
 	} else if lastType == "Progressing" && lastStatus == "True" {
-		// sometimes successful deployments get stuck in this state
-		// skip only if replicas and readyReplicas don't match
-		if replicas != readyReplicas {
+		// NB: typically the deployment remains stuck at the "Progressing" stage
+		// Treat as successful only if the reason property is set to NewReplicaSetAvailable
+		if lastReason == "NewReplicaSetAvailable" {
+			success = true
+		} else {
 			log(fmt.Sprintf("%s: skipping - rollout in progress", au.Bold(au.Cyan("INFO"))))
 			return nil
 		}
-		success = true
 	} else if lastType == "Progressing" && lastStatus == "False" {
 		if !previousSuccess {
 			return nil
@@ -187,14 +191,17 @@ func (c *Controller) syncToStdout(key string) error {
 			fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
 			fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
 			fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
+			fmt.Fprintf(os.Stderr, "=> UnavailableReplicas %d\n", au.Bold(unavailableReplicas))
+			fmt.Fprintf(os.Stderr, "=> UpdatedReplicas %d\n", au.Bold(updatedReplicas))
 			fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
 			if (commitTimestamp > 0) {
 				fmt.Fprintf(os.Stderr, "=> CommitTimestamp %s\n", au.Bold(commitTimestampString))
 			}
 			fmt.Fprintf(os.Stderr, "=> Type %s\n", au.Bold(lastType))
+			fmt.Fprintf(os.Stderr, "=> Reason %s\n", au.Bold(lastReason))
 			fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
 			fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
-			fmt.Fprintf(os.Stderr, "=> Deployment:\n")
+			fmt.Fprintf(os.Stderr, "=> Raw %v\n", au.Bold(conditions))
 		}
 
 		bytes, err := json.Marshal(deployment)
@@ -299,11 +306,11 @@ func main() {
 	var mutex = &sync.Mutex{}
 	var state = map[string]map[string]Deployment{}
 
-	namespaceListWatcher := cache.NewListWatchFromClient(clientset.AppsV1().RESTClient(), "deployments", "", fields.Everything())
+	deploymentListWatcher := cache.NewListWatchFromClient(clientset.AppsV1().RESTClient(), "deployments", "", fields.Everything())
 
 	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
 
-	indexer, informer := cache.NewIndexerInformer(namespaceListWatcher, &appsv1.Deployment{}, 0, cache.ResourceEventHandlerFuncs{
+	indexer, informer := cache.NewIndexerInformer(deploymentListWatcher, &appsv1.Deployment{}, 0, cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			key, err := cache.MetaNamespaceKeyFunc(obj)
 			if err == nil {
@@ -331,11 +338,4 @@ func main() {
 	go controller.Run(1, stop)
 
 	select {}
-}
-
-func homeDir() string {
-	if h := os.Getenv("HOME"); h != "" {
-		return h
-	}
-	return os.Getenv("USERPROFILE") // windows
 }

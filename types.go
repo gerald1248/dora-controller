@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// Controller represents the controller state 
+// Controller represents the controller state
 type Controller struct {
 	indexer   cache.Indexer
 	queue     workqueue.RateLimitingInterface
