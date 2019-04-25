@@ -60,7 +60,13 @@ func (c *Controller) syncToStdout(key string) error {
 		return err
 	}
 
-	// exit condition: ignore deployments without annotation
+	// exit condition 1: nil interface received (e.g. after manual resource deletion)
+	// nothing to do here; return gracefully
+	if obj == nil {
+		return nil
+	}
+	
+	// exit condition 2: ignore deployments without annotation
 	team := obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationNameTeam)]
 	if len(team) == 0 {
 		return nil
@@ -70,6 +76,7 @@ func (c *Controller) syncToStdout(key string) error {
 	var commitTimestamp int64 // we store this form
 	commitTimestampString = obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationNameCommitTimestamp)]
 
+	// parse commit timestamp (Unix time)
 	intVar, err := strconv.Atoi(commitTimestampString)
 	if err != nil {
 		commitTimestamp = 0
@@ -107,7 +114,7 @@ func (c *Controller) syncToStdout(key string) error {
 		c.mutex.Unlock()
 		return nil
 	}
-	log(fmt.Sprintf("%s: scanning deployment %s", au.Bold(au.Cyan("INFO")), name))
+	log(fmt.Sprintf("%s: processing deployment %s", au.Bold(au.Cyan("INFO")), au.Bold(name)))
 	success := false
 	c.mutex.Lock()
 	if !teamExists {
@@ -115,8 +122,8 @@ func (c *Controller) syncToStdout(key string) error {
 	}
 	c.mutex.Unlock()
 
-	// NEW images do not qualify as UPDATED images
-	// don't process all available deployments right away
+	// record image changes (here used as shorthand for code releases)
+	// and previous success/failure
 	imageChanged := false
 	var recoverySeconds int64
 	recoverySeconds = 0
@@ -124,7 +131,15 @@ func (c *Controller) syncToStdout(key string) error {
 	previousSuccess := true
 	if nameExists {
 		previous := c.state[team][name]
+		
 		imageChanged = image != previous.Image
+		
+		// exception: no previous image recorded
+		// new images do not qualify as updated images
+		if len(previous.Image) == 0 {
+			imageChanged = false
+		}
+		
 		previousSuccess = previous.Success
 		if !previousSuccess {
 			recoverySeconds = lastTimestamp.Unix() - previous.LastTimestamp
@@ -167,6 +182,7 @@ func (c *Controller) syncToStdout(key string) error {
 	if commitTimestamp > 0 {
 		leadTimeSeconds = lastTimestamp.Unix() - commitTimestamp
 	}
+
 	deployment := Deployment{
 		name,
 		namespace,
@@ -185,33 +201,32 @@ func (c *Controller) syncToStdout(key string) error {
 	debug := c.debug
 	c.mutex.Unlock()
 
-	if len(team) > 0 {
-		if debug {
-			fmt.Fprintf(os.Stderr, "=> Team: %s\n", au.Bold(team))
-			fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
-			fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
-			fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
-			fmt.Fprintf(os.Stderr, "=> UnavailableReplicas %d\n", au.Bold(unavailableReplicas))
-			fmt.Fprintf(os.Stderr, "=> UpdatedReplicas %d\n", au.Bold(updatedReplicas))
-			fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
-			if (commitTimestamp > 0) {
-				fmt.Fprintf(os.Stderr, "=> CommitTimestamp %s\n", au.Bold(commitTimestampString))
-			}
-			fmt.Fprintf(os.Stderr, "=> Type %s\n", au.Bold(lastType))
-			fmt.Fprintf(os.Stderr, "=> Reason %s\n", au.Bold(lastReason))
-			fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
-			fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
-			fmt.Fprintf(os.Stderr, "=> Raw %v\n", au.Bold(conditions))
+	if debug {
+		fmt.Fprintf(os.Stderr, "=> Team: %s\n", au.Bold(team))
+		fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
+		fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
+		fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
+		fmt.Fprintf(os.Stderr, "=> UnavailableReplicas %d\n", au.Bold(unavailableReplicas))
+		fmt.Fprintf(os.Stderr, "=> UpdatedReplicas %d\n", au.Bold(updatedReplicas))
+		fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
+		if (commitTimestamp > 0) {
+			fmt.Fprintf(os.Stderr, "=> CommitTimestamp %s\n", au.Bold(commitTimestampString))
 		}
-
-		bytes, err := json.Marshal(deployment)
-		if err != nil {
-			log(fmt.Sprintf("%s: %s", au.Bold(au.Red("Error")), au.Bold(err)))
-			return nil
-		}
-		// main JSON output goes to stdout
-		fmt.Printf("%s\n", bytes)
+		fmt.Fprintf(os.Stderr, "=> Type %s\n", au.Bold(lastType))
+		fmt.Fprintf(os.Stderr, "=> Reason %s\n", au.Bold(lastReason))
+		fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
+		fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
+		fmt.Fprintf(os.Stderr, "=> Raw %v\n", au.Bold(conditions))
 	}
+
+	bytes, err := json.Marshal(deployment)
+	if err != nil {
+		log(fmt.Sprintf("%s: %s", au.Bold(au.Red("Error")), au.Bold(err)))
+		return nil
+	}
+	// main JSON output goes to stdout
+	fmt.Printf("%s\n", bytes)
+
 	if c.queue.Len() == 0 {
 		// TODO: is this significant here?
 	}
