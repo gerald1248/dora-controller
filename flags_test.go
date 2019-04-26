@@ -12,9 +12,10 @@ func TestGetDeploymentFlags(t *testing.T) {
 		imageChanged    bool
 		flag            string
 	}{
-		{"success", true, true, true, "DORA_SUCCESS|DORA_NEW_IMAGE|DORA_SUCCESSFUL_DEPLOYMENT|DORA_PREVIOUS_SUCCESS"},
+		{"successNewDeployment", true, true, true, "DORA_SUCCESS|DORA_NEW_IMAGE|DORA_SUCCESSFUL_DEPLOYMENT|DORA_PREVIOUS_SUCCESS"},
+		{"failureNewDeployment", false, true, true, "DORA_FAILURE|DORA_NEW_IMAGE|DORA_FAILED_DEPLOYMENT|DORA_PREVIOUS_SUCCESS"},
+		{"failureRepeatDeployment", false, true, false, "DORA_FAILURE|DORA_SAME_IMAGE|DORA_PREVIOUS_SUCCESS"},
 		{"recovery", true, false, false, "DORA_SUCCESS|DORA_SAME_IMAGE|DORA_PREVIOUS_FAILURE|DORA_RECOVERY"},
-		{"failure", false, true, false, "DORA_FAILURE|DORA_SAME_IMAGE|DORA_PREVIOUS_SUCCESS"},
 	}
 
 	for _, test := range tests {

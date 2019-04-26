@@ -26,6 +26,7 @@ import (
 const annotationPrefix = "dora"
 const annotationNameTeam = "team"
 const annotationNameCommitTimestamp = "commitTimestamp"
+const progressingPauseMilliseconds = 4000
 
 // NewController constructs the central controller state
 func NewController(queue workqueue.RateLimitingInterface, indexer cache.Indexer, informer cache.Controller, clientset kubernetes.Interface, mutex *sync.Mutex, state map[string]map[string]Deployment, debug bool) *Controller {
@@ -65,7 +66,7 @@ func (c *Controller) syncToStdout(key string) error {
 	if obj == nil {
 		return nil
 	}
-	
+
 	// exit condition 2: ignore deployments without annotation
 	team := obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationNameTeam)]
 	if len(team) == 0 {
@@ -73,7 +74,7 @@ func (c *Controller) syncToStdout(key string) error {
 	}
 
 	var commitTimestampString string // string representation of int64
-	var commitTimestamp int64 // we store this form
+	var commitTimestamp int64        // we store this form
 	commitTimestampString = obj.(*appsv1.Deployment).ObjectMeta.Annotations[fmt.Sprintf("%s/%s", annotationPrefix, annotationNameCommitTimestamp)]
 
 	// parse commit timestamp (Unix time)
@@ -86,12 +87,13 @@ func (c *Controller) syncToStdout(key string) error {
 
 	name := obj.(*appsv1.Deployment).GetName()
 	namespace := obj.(*appsv1.Deployment).ObjectMeta.Namespace
+	generation := obj.(*appsv1.Deployment).ObjectMeta.Generation
 	image := obj.(*appsv1.Deployment).Spec.Template.Spec.Containers[0].Image
 	replicas := obj.(*appsv1.Deployment).Status.Replicas
 	readyReplicas := obj.(*appsv1.Deployment).Status.ReadyReplicas
+	conditions := obj.(*appsv1.Deployment).Status.Conditions
 	unavailableReplicas := obj.(*appsv1.Deployment).Status.UnavailableReplicas
 	updatedReplicas := obj.(*appsv1.Deployment).Status.UpdatedReplicas
-	conditions := obj.(*appsv1.Deployment).Status.Conditions
 	lastTimestamp := conditions[len(conditions)-1].LastTransitionTime
 	lastType := conditions[len(conditions)-1].Type
 	lastStatus := conditions[len(conditions)-1].Status
@@ -116,11 +118,6 @@ func (c *Controller) syncToStdout(key string) error {
 	}
 	log(fmt.Sprintf("%s: processing deployment %s", au.Bold(au.Cyan("INFO")), au.Bold(name)))
 	success := false
-	c.mutex.Lock()
-	if !teamExists {
-		c.state[team] = map[string]Deployment{}
-	}
-	c.mutex.Unlock()
 
 	// record image changes (here used as shorthand for code releases)
 	// and previous success/failure
@@ -131,15 +128,15 @@ func (c *Controller) syncToStdout(key string) error {
 	previousSuccess := true
 	if nameExists {
 		previous := c.state[team][name]
-		
+
 		imageChanged = image != previous.Image
-		
+
 		// exception: no previous image recorded
 		// new images do not qualify as updated images
 		if len(previous.Image) == 0 {
 			imageChanged = false
 		}
-		
+
 		previousSuccess = previous.Success
 		if !previousSuccess {
 			recoverySeconds = lastTimestamp.Unix() - previous.LastTimestamp
@@ -152,6 +149,8 @@ func (c *Controller) syncToStdout(key string) error {
 	} else if lastType == "Progressing" && lastStatus == "True" {
 		// NB: typically the deployment remains stuck at the "Progressing" stage
 		// Treat as successful only if the reason property is set to NewReplicaSetAvailable
+		// and (crucially) the pod phase is Running
+		time.Sleep(progressingPauseMilliseconds * time.Millisecond)
 		if lastReason == "NewReplicaSetAvailable" {
 			success = true
 		} else {
@@ -189,7 +188,7 @@ func (c *Controller) syncToStdout(key string) error {
 		image,
 		flags,
 		lastTimestamp.Unix(), //int64
-		commitTimestamp, //int64
+		commitTimestamp,      //int64
 		success,
 		imageChanged,
 		recoverySeconds,
@@ -204,19 +203,19 @@ func (c *Controller) syncToStdout(key string) error {
 	if debug {
 		fmt.Fprintf(os.Stderr, "=> Team: %s\n", au.Bold(team))
 		fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
+		fmt.Fprintf(os.Stderr, "=> Generation %d\n", au.Bold(generation))
 		fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
 		fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
 		fmt.Fprintf(os.Stderr, "=> UnavailableReplicas %d\n", au.Bold(unavailableReplicas))
 		fmt.Fprintf(os.Stderr, "=> UpdatedReplicas %d\n", au.Bold(updatedReplicas))
 		fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
-		if (commitTimestamp > 0) {
+		if commitTimestamp > 0 {
 			fmt.Fprintf(os.Stderr, "=> CommitTimestamp %s\n", au.Bold(commitTimestampString))
 		}
 		fmt.Fprintf(os.Stderr, "=> Type %s\n", au.Bold(lastType))
 		fmt.Fprintf(os.Stderr, "=> Reason %s\n", au.Bold(lastReason))
 		fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
 		fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
-		fmt.Fprintf(os.Stderr, "=> Raw %v\n", au.Bold(conditions))
 	}
 
 	bytes, err := json.Marshal(deployment)
@@ -257,6 +256,7 @@ func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 
 	defer c.queue.ShutDown()
 	log(fmt.Sprintf("%s: starting DORA controller", au.Bold(au.Cyan("INFO"))))
+	log(fmt.Sprintf("%s: watching deployments with annotations %s and %s", au.Bold(au.Cyan("INFO")), au.Bold(fmt.Sprintf("%s/%s", annotationPrefix, annotationNameTeam)), au.Bold(fmt.Sprintf("%s/%s", annotationPrefix, annotationNameCommitTimestamp))))
 
 	go c.informer.Run(stopCh)
 
