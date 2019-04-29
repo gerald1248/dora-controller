@@ -22,13 +22,13 @@ The controller does not retain state beyond a simple datastructure mapping teams
 
 Single-line JSON log messages are written to STDOUT. Aggregation and data analysis is pushed out to central log management (be that EFK, Splunk or another kind of tool entirely).
 
-**Lead time** is retrieved by filtering for flag `DORA_DEPLOYMENT_SUCCESS` and the `leadTimeSeconds` attribute. (Only available when deployments are annotated as indicated above.)
+**Lead time** is retrieved by filtering for flag `DORA_SUCCESSFUL_DEPLOYMENT` and the `leadTimeSeconds` attribute. (Only available when deployments are annotated as indicated above.)
 
-**Deployment frequency** can be measured by counting log entries with flag `DORA_DEPLOYMENT_SUCCESS` (and, if desired, `DORA_DEPLOYMENT_FAILURE`).
+**Deployment frequency** can be measured by counting log entries with flag `DORA_SUCCESSFUL_DEPLOYMENT` (and, if desired, `DORA_FAILED_DEPLOYMENT`).
 
 To compute the **mean time to recovery** over a period of time, filter for `DORA_RECOVERY` and the `recoverySeconds` attribute.
 
-The **change fail percentage** is `DORA_DEPLOYMENT_FAILURE` divided by `DORA_DEPLOYMENT_SUCCESS || 1` times one hundred.
+The **change fail percentage** is `DORA_FAILED_DEPLOYMENT` divided by `DORA_SUCCESSFUL_DEPLOYMENT || 1` times one hundred.
 
 ## Known limitations
 
