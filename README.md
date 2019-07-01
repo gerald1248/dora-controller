@@ -1,4 +1,7 @@
 # DORA controller
+
+![controller overview](ditaa/controller.png)
+
 This controller collects four DORA metrics:
 
 * cycle time (commit to deployment)
