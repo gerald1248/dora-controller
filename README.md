@@ -1,7 +1,7 @@
 # DORA controller
 This controller collects four DORA metrics:
 
-* lead time (commit to deployment)
+* cycle time (commit to deployment)
 
 * deploy frequency
 
@@ -13,7 +13,7 @@ To gather metrics for your deployment, add the following annotation(s):
 
 * `dora/team` (e.g. `frontend`, `ops`) - required
 
-* `dora/commitTimestamp` (Unix time, e.g. `"1555126199"`) - optional; required only for lead time measurement
+* `dora/commitTimestamp` (Unix time, e.g. `"1555126199"`) - optional; required only for cycle time measurement
 
 Note that the numerical commit timestamp must be quoted for the deployment to validate. (Annotation values are strings.)
 
@@ -22,7 +22,7 @@ The controller does not retain state beyond a simple datastructure mapping teams
 
 Single-line JSON log messages are written to STDOUT. Aggregation and data analysis is pushed out to central log management (be that EFK, Splunk or another kind of tool entirely).
 
-**Lead time** is retrieved by filtering for flag `DORA_SUCCESSFUL_DEPLOYMENT` and the `leadTimeSeconds` attribute. (Only available when deployments are annotated as indicated above.)
+**Cycle time** is retrieved by filtering for flag `DORA_SUCCESSFUL_DEPLOYMENT` and the `cycleTimeSeconds` attribute. (Only available when deployments are annotated as indicated above.)
 
 **Deployment frequency** can be measured by counting log entries with flag `DORA_SUCCESSFUL_DEPLOYMENT` (and, if desired, `DORA_FAILED_DEPLOYMENT`).
 
@@ -32,7 +32,7 @@ The **change fail percentage** is `DORA_FAILED_DEPLOYMENT` divided by `DORA_SUCC
 
 ## Known limitations
 
-No attempt is made to distinguish between regular deployment, patches, hotfixes, and so on. Any deployment with a changed Docker image or tag is treated as a new code release. To measure lead time, the build/CI system has to record the timestamp of the final git commit in annotation form.
+No attempt is made to distinguish between regular deployment, patches, hotfixes, and so on. Any deployment with a changed Docker image or tag is treated as a new code release. To measure cycle time, the build/CI system has to record the timestamp of the final git commit in annotation form. Lead time is out of scope as it would require an external data source (e.g. date task/story added to backlog).
 
 ## Deployment
 

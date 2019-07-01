@@ -20,14 +20,14 @@ type Controller struct {
 
 // Deployment captures the information written to stdout
 type Deployment struct {
-	Name            string `json:"name"`
-	Namespace       string `json:"namespace"`
-	Image           string `json:"image"`
-	Flags           string `json:"flags"`
-	LastTimestamp   int64  `json:"lastTimestamp"`
-	CommitTimestamp int64  `json:"commitTimestamp"`
-	Success         bool   `json:"success"`
-	ImageChanged    bool   `json:"imageChanged"`
-	RecoverySeconds int64  `json:"recoverySeconds,omitempty"`
-	LeadTimeSeconds int64  `json:"leadTimeSeconds,omitempty"`
+	Name            string  `json:"name"`
+	Namespace       string  `json:"namespace"`
+	Image           string  `json:"image"`
+	Flags           string  `json:"flags"`
+	LastTimestamp   int64   `json:"lastTimestamp"`
+	CommitTimestamp int64   `json:"commitTimestamp"`
+	Success         bool    `json:"success"`
+	ImageChanged    bool    `json:"imageChanged"`
+	RecoverySeconds int64   `json:"recoverySeconds,omitempty"`
+	CycleTimeSeconds int64  `json:"cycleTimeSeconds,omitempty"`
 }

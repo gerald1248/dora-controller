@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"sync"
@@ -57,7 +58,7 @@ func (c *Controller) processNextItem() bool {
 func (c *Controller) syncToStdout(key string) error {
 	obj, keyExists, err := c.indexer.GetByKey(key)
 	if err != nil {
-		log(fmt.Sprintf("%s: fetching object with key %s from store failed with %v", au.Bold(au.Red("Error")), key, err))
+		log.Println(fmt.Sprintf("%s: fetching object with key %s from store failed with %v", au.Bold(au.Red("Error")), key, err))
 		return err
 	}
 
@@ -88,12 +89,13 @@ func (c *Controller) syncToStdout(key string) error {
 	name := obj.(*appsv1.Deployment).GetName()
 	namespace := obj.(*appsv1.Deployment).ObjectMeta.Namespace
 	generation := obj.(*appsv1.Deployment).ObjectMeta.Generation
-	image := obj.(*appsv1.Deployment).Spec.Template.Spec.Containers[0].Image
+	image := obj.(*appsv1.Deployment).Spec.Template.Spec.Containers[0].Image //TODO: proxy sidecar detection
 	replicas := obj.(*appsv1.Deployment).Status.Replicas
 	readyReplicas := obj.(*appsv1.Deployment).Status.ReadyReplicas
-	conditions := obj.(*appsv1.Deployment).Status.Conditions
 	unavailableReplicas := obj.(*appsv1.Deployment).Status.UnavailableReplicas
 	updatedReplicas := obj.(*appsv1.Deployment).Status.UpdatedReplicas
+
+	conditions := obj.(*appsv1.Deployment).Status.Conditions
 	lastTimestamp := conditions[len(conditions)-1].LastTransitionTime
 	lastType := conditions[len(conditions)-1].Type
 	lastStatus := conditions[len(conditions)-1].Status
@@ -108,7 +110,7 @@ func (c *Controller) syncToStdout(key string) error {
 	c.mutex.Unlock()
 
 	if !keyExists {
-		log(fmt.Sprintf("%s: deployment %s deleted", au.Bold(au.Cyan("INFO")), key))
+		log.Println(fmt.Sprintf("%s: deployment %s deleted", au.Bold(au.Cyan("INFO")), key))
 		c.mutex.Lock()
 		if teamExists {
 			c.state[team][name] = Deployment{}
@@ -116,26 +118,22 @@ func (c *Controller) syncToStdout(key string) error {
 		c.mutex.Unlock()
 		return nil
 	}
-	log(fmt.Sprintf("%s: processing deployment %s", au.Bold(au.Cyan("INFO")), au.Bold(name)))
+	log.Println(fmt.Sprintf("%s: processing deployment %s", au.Bold(au.Cyan("INFO")), au.Bold(name)))
 	success := false
 
 	// record image changes (here used as shorthand for code releases)
 	// and previous success/failure
-	imageChanged := false
+	previousImage := ""
+	imageChanged := true // treat first pass as new release
 	var recoverySeconds int64
 	recoverySeconds = 0
 	_, nameExists := c.state[team][name]
 	previousSuccess := true
 	if nameExists {
 		previous := c.state[team][name]
+		previousImage = previous.Image
 
-		imageChanged = image != previous.Image
-
-		// exception: no previous image recorded
-		// new images do not qualify as updated images
-		if len(previous.Image) == 0 {
-			imageChanged = false
-		}
+		imageChanged = image != previousImage
 
 		previousSuccess = previous.Success
 		if !previousSuccess {
@@ -148,15 +146,13 @@ func (c *Controller) syncToStdout(key string) error {
 		success = true
 	} else if lastType == "Progressing" && lastStatus == "True" {
 		// NB: typically the deployment remains stuck at the "Progressing" stage
-		// Treat as successful only if the reason property is set to NewReplicaSetAvailable
-		// and (crucially) the pod phase is Running
+		// Treat as successful only if the pod phase is Running
 		time.Sleep(progressingPauseMilliseconds * time.Millisecond)
-		if lastReason == "NewReplicaSetAvailable" {
-			success = true
-		} else {
-			log(fmt.Sprintf("%s: skipping - rollout in progress", au.Bold(au.Cyan("INFO"))))
+		if !verifyPodsRunning(c.clientset, namespace, name, image) {
+			log.Println(fmt.Sprintf("%s: skipping - rollout in progress", au.Bold(au.Cyan("INFO"))))
 			return nil
 		}
+		success = true
 	} else if lastType == "Progressing" && lastStatus == "False" {
 		if !previousSuccess {
 			return nil
@@ -177,9 +173,10 @@ func (c *Controller) syncToStdout(key string) error {
 
 	flags := getDeploymentFlags(success, previousSuccess, imageChanged)
 
-	var leadTimeSeconds int64
-	if commitTimestamp > 0 {
-		leadTimeSeconds = lastTimestamp.Unix() - commitTimestamp
+	var cycleTimeSeconds int64
+	// don't measure cycle time if no known previous image
+	if commitTimestamp > 0 && len(previousImage) > 0 {
+		cycleTimeSeconds = lastTimestamp.Unix() - commitTimestamp
 	}
 
 	deployment := Deployment{
@@ -192,7 +189,7 @@ func (c *Controller) syncToStdout(key string) error {
 		success,
 		imageChanged,
 		recoverySeconds,
-		leadTimeSeconds,
+		cycleTimeSeconds,
 	}
 
 	c.mutex.Lock()
@@ -203,6 +200,7 @@ func (c *Controller) syncToStdout(key string) error {
 	if debug {
 		fmt.Fprintf(os.Stderr, "=> Team: %s\n", au.Bold(team))
 		fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
+		fmt.Fprintf(os.Stderr, "=> prev. image %s\n", au.Bold(previousImage))
 		fmt.Fprintf(os.Stderr, "=> Generation %d\n", au.Bold(generation))
 		fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
 		fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
@@ -220,7 +218,7 @@ func (c *Controller) syncToStdout(key string) error {
 
 	bytes, err := json.Marshal(deployment)
 	if err != nil {
-		log(fmt.Sprintf("%s: %s", au.Bold(au.Red("Error")), au.Bold(err)))
+		log.Println(fmt.Sprintf("%s: %s", au.Bold(au.Red("Error")), au.Bold(err)))
 		return nil
 	}
 	// main JSON output goes to stdout
@@ -240,14 +238,14 @@ func (c *Controller) handleErr(err error, key interface{}) {
 	}
 
 	if c.queue.NumRequeues(key) < 5 {
-		log(fmt.Sprintf("%s: can't sync deployment %v: %v", au.Bold(au.Red("Error")), key, err))
+		log.Println(fmt.Sprintf("%s: can't sync deployment %v: %v", au.Bold(au.Red("Error")), key, err))
 		c.queue.AddRateLimited(key)
 		return
 	}
 
 	c.queue.Forget(key)
 	runtime.HandleError(err)
-	log(fmt.Sprintf("%s: dropping deployment %q from the queue: %v", au.Bold(au.Cyan("INFO")), key, err))
+	log.Println(fmt.Sprintf("%s: dropping deployment %q from the queue: %v", au.Bold(au.Cyan("INFO")), key, err))
 }
 
 // Run manages the controller lifecycle
@@ -255,8 +253,8 @@ func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 	defer runtime.HandleCrash()
 
 	defer c.queue.ShutDown()
-	log(fmt.Sprintf("%s: starting DORA controller", au.Bold(au.Cyan("INFO"))))
-	log(fmt.Sprintf("%s: watching deployments with annotations %s and %s", au.Bold(au.Cyan("INFO")), au.Bold(fmt.Sprintf("%s/%s", annotationPrefix, annotationNameTeam)), au.Bold(fmt.Sprintf("%s/%s", annotationPrefix, annotationNameCommitTimestamp))))
+	log.Println(fmt.Sprintf("%s: starting DORA controller", au.Bold(au.Cyan("INFO"))))
+	log.Println(fmt.Sprintf("%s: watching deployments with annotations %s and %s", au.Bold(au.Cyan("INFO")), au.Bold(fmt.Sprintf("%s/%s", annotationPrefix, annotationNameTeam)), au.Bold(fmt.Sprintf("%s/%s", annotationPrefix, annotationNameCommitTimestamp))))
 
 	go c.informer.Run(stopCh)
 
@@ -270,7 +268,7 @@ func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 	}
 
 	<-stopCh
-	log(fmt.Sprintf("%s: stopping DORA controller", au.Bold(au.Cyan("INFO"))))
+	log.Println(fmt.Sprintf("%s: stopping DORA controller", au.Bold(au.Cyan("INFO"))))
 }
 
 func (c *Controller) runWorker() {
