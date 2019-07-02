@@ -88,18 +88,11 @@ func (c *Controller) syncToStdout(key string) error {
 
 	name := obj.(*appsv1.Deployment).GetName()
 	namespace := obj.(*appsv1.Deployment).ObjectMeta.Namespace
-	generation := obj.(*appsv1.Deployment).ObjectMeta.Generation
 	image := obj.(*appsv1.Deployment).Spec.Template.Spec.Containers[0].Image //TODO: proxy sidecar detection
-	replicas := obj.(*appsv1.Deployment).Status.Replicas
-	readyReplicas := obj.(*appsv1.Deployment).Status.ReadyReplicas
-	unavailableReplicas := obj.(*appsv1.Deployment).Status.UnavailableReplicas
-	updatedReplicas := obj.(*appsv1.Deployment).Status.UpdatedReplicas
-
 	conditions := obj.(*appsv1.Deployment).Status.Conditions
 	lastTimestamp := conditions[len(conditions)-1].LastTransitionTime
 	lastType := conditions[len(conditions)-1].Type
 	lastStatus := conditions[len(conditions)-1].Status
-	lastReason := conditions[len(conditions)-1].Reason
 
 	_, teamExists := c.state[team]
 
@@ -198,22 +191,7 @@ func (c *Controller) syncToStdout(key string) error {
 	c.mutex.Unlock()
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "=> Team: %s\n", au.Bold(team))
-		fmt.Fprintf(os.Stderr, "=> Image %s\n", au.Bold(image))
-		fmt.Fprintf(os.Stderr, "=> prev. image %s\n", au.Bold(previousImage))
-		fmt.Fprintf(os.Stderr, "=> Generation %d\n", au.Bold(generation))
-		fmt.Fprintf(os.Stderr, "=> Replicas %d\n", au.Bold(replicas))
-		fmt.Fprintf(os.Stderr, "=> ReadyReplicas %d\n", au.Bold(readyReplicas))
-		fmt.Fprintf(os.Stderr, "=> UnavailableReplicas %d\n", au.Bold(unavailableReplicas))
-		fmt.Fprintf(os.Stderr, "=> UpdatedReplicas %d\n", au.Bold(updatedReplicas))
-		fmt.Fprintf(os.Stderr, "=> LastTransitionTime %s\n", au.Bold(lastTimestamp))
-		if commitTimestamp > 0 {
-			fmt.Fprintf(os.Stderr, "=> CommitTimestamp %s\n", au.Bold(commitTimestampString))
-		}
-		fmt.Fprintf(os.Stderr, "=> Type %s\n", au.Bold(lastType))
-		fmt.Fprintf(os.Stderr, "=> Reason %s\n", au.Bold(lastReason))
-		fmt.Fprintf(os.Stderr, "=> Status %s\n", au.Bold(lastStatus))
-		fmt.Fprintf(os.Stderr, "=> Success %t\n", au.Bold(success))
+		log.Println(describeDeployment(deployment))
 	}
 
 	bytes, err := json.Marshal(deployment)
